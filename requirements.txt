@@ -1,9 +1,9 @@
 fastapi
 uvicorn
+gunicorn
+pymongo
+bson
 python-multipart
 jinja2
 requests
-numpy
-opencv-python
-torch
-torchvision
+python-dotenv
