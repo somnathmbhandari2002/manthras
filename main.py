@@ -1,315 +1,3 @@
-# from fastapi import FastAPI, Form, UploadFile, File, HTTPException
-# from fastapi.middleware.cors import CORSMiddleware
-# from fastapi.responses import JSONResponse, StreamingResponse
-# from pymongo import MongoClient, ReturnDocument
-# from bson import ObjectId, Binary
-# import base64
-# import mimetypes
-# from typing import Optional, Dict, Any, List, DefaultDict
-# from collections import defaultdict
-
-# # -------------------------------------------------
-# # MongoDB Atlas Connection
-# # -------------------------------------------------
-# MONGO_URL = "mongodb+srv://somnath:somnath@cluster0.izhugny.mongodb.net"
-# client = MongoClient(MONGO_URL)
-# db = client["devi_mantras_db"]
-
-# mantras_collection = db["mantras"]
-# contacts_collection = db["contact_profile"]  # single-document collection
-
-# # -------------------------------------------------
-# # FastAPI App Setup
-# # -------------------------------------------------
-# app = FastAPI(title="Devi Mantras API", version="1.2.0")
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],  # tighten for prod
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-# # -------------------------------------------------
-# # Root / Health / Version
-# # -------------------------------------------------
-# @app.get("/")
-# def root():
-#     return {"message": "🌺 Devi Mantras API is running with MongoDB Atlas"}
-
-# @app.get("/health")
-# def health():
-#     try:
-#         mantras_collection.estimated_document_count()
-#         return {"status": "ok"}
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"DB error: {e}")
-
-# @app.get("/version")
-# def version():
-#     return {"version": app.version}
-
-# # -------------------------------------------------
-# # Admin Authentication (Predefined)
-# # -------------------------------------------------
-# ADMIN_USERNAME = "admin"
-# ADMIN_PASSWORD = "admin"
-
-# @app.post("/auth/login")
-# def login(username: str = Form(...), password: str = Form(...)):
-#     if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-#         return {"message": "Login successful"}
-#     raise HTTPException(status_code=401, detail="Invalid username or password")
-
-# # -------------------------------------------------
-# # Helpers
-# # -------------------------------------------------
-# ALLOWED_CATEGORIES = [
-#     "LALITA DEVI",
-#     "TITHINITYA DEVI",
-#     "BALA TRIPURA SUNDARI",
-#     "KALI",
-#     "LAKSHMI",
-#     "SARASWATHI",
-# ]
-
-# def normalize_category(cat: str) -> str:
-#     if not cat:
-#         raise HTTPException(status_code=400, detail="Category is required")
-#     c = cat.strip().upper()
-#     if c not in ALLOWED_CATEGORIES:
-#         raise HTTPException(status_code=400, detail=f"Invalid category. Allowed: {', '.join(ALLOWED_CATEGORIES)}")
-#     return c
-
-# def guess_mime(filename: Optional[str], default: str) -> str:
-#     if not filename:
-#         return default
-#     mt, _ = mimetypes.guess_type(filename)
-#     return mt or default
-
-# def ensure_oid(id_str: str) -> ObjectId:
-#     try:
-#         return ObjectId(id_str)
-#     except Exception:
-#         raise HTTPException(status_code=400, detail="Invalid id")
-
-# def safe_pop_media(doc: Dict[str, Any]) -> Dict[str, Any]:
-#     for k in ["image", "pdf", "audio"]:
-#         if k in doc:
-#             doc.pop(k)
-#     return doc
-
-# def attach_file_urls(doc: Dict[str, Any]) -> Dict[str, Any]:
-#     doc["_id"] = str(doc["_id"])
-#     doc["image_url"] = f"/mantras/{doc['_id']}/image" if doc.get("image_filename") else None
-#     doc["pdf_url"] = f"/mantras/{doc['_id']}/pdf" if doc.get("pdf_filename") else None
-#     doc["audio_url"] = f"/mantras/{doc['_id']}/audio" if doc.get("audio_filename") else None
-#     return doc
-
-# # -------------------------------------------------
-# # Mantras: Upload (with category)
-# # -------------------------------------------------
-# @app.post("/mantras/upload")
-# async def upload_mantra(
-#     mantra_name: str = Form(...),
-#     language: str = Form(...),
-#     description: str = Form(""),
-#     category: str = Form(...),  # NEW
-#     image: UploadFile = File(...),
-#     pdf: UploadFile = File(...),
-#     audio: UploadFile = File(None),
-# ):
-#     norm_cat = normalize_category(category)
-
-#     image_data = await image.read()
-#     pdf_data = await pdf.read()
-#     audio_data = await audio.read() if audio else None
-
-#     image_ct = image.content_type or guess_mime(image.filename, "image/jpeg")
-#     pdf_ct = pdf.content_type or "application/pdf"
-#     audio_ct = audio.content_type if audio else None
-#     if audio and not audio_ct:
-#         audio_ct = guess_mime(audio.filename, "audio/mpeg")
-
-#     mantra = {
-#         "name": mantra_name,
-#         "language": language,
-#         "description": description,
-#         "category": norm_cat,  # store normalized
-#         "image": Binary(image_data),
-#         "image_filename": image.filename,
-#         "image_content_type": image_ct,
-#         "pdf": Binary(pdf_data),
-#         "pdf_filename": pdf.filename,
-#         "pdf_content_type": pdf_ct,
-#         "audio": Binary(audio_data) if audio_data else None,
-#         "audio_filename": audio.filename if audio else None,
-#         "audio_content_type": audio_ct,
-#     }
-#     result = mantras_collection.insert_one(mantra)
-#     return {"message": "Mantra uploaded successfully", "id": str(result.inserted_id)}
-
-# # -------------------------------------------------
-# # Mantras: List (optional filters)
-# # -------------------------------------------------
-# @app.get("/mantras")
-# def get_mantras(category: Optional[str] = None, language: Optional[str] = None):
-#     query: Dict[str, Any] = {}
-#     if category:
-#         query["category"] = normalize_category(category)
-#     if language:
-#         query["language"] = language
-
-#     projection = {"image": 0, "pdf": 0, "audio": 0}
-#     mantras = list(mantras_collection.find(query, projection).sort([("_id", -1)]))
-#     for m in mantras:
-#         attach_file_urls(m)
-#     return mantras
-
-# # -------------------------------------------------
-# # Mantras: Grouped by category for home sections
-# # -------------------------------------------------
-# @app.get("/mantras/grouped")
-# def get_mantras_grouped():
-#     projection = {"image": 0, "pdf": 0, "audio": 0}
-#     cursor = mantras_collection.find({}, projection).sort([("category", 1), ("_id", -1)])
-#     grouped: DefaultDict[str, List[Dict[str, Any]]] = defaultdict(list)
-#     for doc in cursor:
-#         attach_file_urls(doc)
-#         grouped[doc.get("category", "UNCATEGORIZED")].append(doc)
-#     # Ensure all allowed categories appear, even if empty
-#     out = {cat: grouped.get(cat, []) for cat in ALLOWED_CATEGORIES}
-#     return out
-
-# # -------------------------------------------------
-# # Mantras: Single (metadata + URLs)
-# # -------------------------------------------------
-# @app.get("/mantras/{mantra_id}")
-# def get_mantra(mantra_id: str):
-#     oid = ensure_oid(mantra_id)
-#     mantra = mantras_collection.find_one({"_id": oid})
-#     if not mantra:
-#         raise HTTPException(status_code=404, detail="Mantra not found")
-#     safe_pop_media(mantra)
-#     attach_file_urls(mantra)
-#     return mantra
-
-# # -------------------------------------------------
-# # Mantras: Optional Base64 variant
-# # -------------------------------------------------
-# @app.get("/mantras/{mantra_id}/base64")
-# def get_mantra_base64(mantra_id: str):
-#     oid = ensure_oid(mantra_id)
-#     mantra = mantras_collection.find_one({"_id": oid})
-#     if not mantra:
-#         raise HTTPException(status_code=404, detail="Mantra not found")
-#     response = {
-#         "_id": str(mantra["_id"]),
-#         "name": mantra.get("name"),
-#         "language": mantra.get("language"),
-#         "description": mantra.get("description"),
-#         "category": mantra.get("category"),
-#         "image": base64.b64encode(bytes(mantra["image"])).decode("utf-8") if mantra.get("image") else None,
-#         "image_content_type": mantra.get("image_content_type"),
-#         "pdf": base64.b64encode(bytes(mantra["pdf"])).decode("utf-8") if mantra.get("pdf") else None,
-#         "pdf_content_type": mantra.get("pdf_content_type"),
-#         "audio": base64.b64encode(bytes(mantra["audio"])).decode("utf-8") if mantra.get("audio") else None,
-#         "audio_content_type": mantra.get("audio_content_type"),
-#     }
-#     return response
-
-# # -------------------------------------------------
-# # Mantras: File streaming
-# # -------------------------------------------------
-# def fetch_doc_or_404(oid: ObjectId):
-#     doc = mantras_collection.find_one({"_id": oid})
-#     if not doc:
-#         raise HTTPException(status_code=404, detail="Mantra not found")
-#     return doc
-
-# @app.get("/mantras/{mantra_id}/image")
-# def get_image(mantra_id: str):
-#     oid = ensure_oid(mantra_id)
-#     doc = fetch_doc_or_404(oid)
-#     img = doc.get("image")
-#     if not img:
-#         raise HTTPException(status_code=404, detail="Image not found")
-#     ct = doc.get("image_content_type") or "image/jpeg"
-#     return StreamingResponse(iter([bytes(img)]), media_type=ct)
-
-# @app.get("/mantras/{mantra_id}/pdf")
-# def get_pdf(mantra_id: str):
-#     oid = ensure_oid(mantra_id)
-#     doc = fetch_doc_or_404(oid)
-#     pdf = doc.get("pdf")
-#     if not pdf:
-#         raise HTTPException(status_code=404, detail="PDF not found")
-#     ct = doc.get("pdf_content_type") or "application/pdf"
-#     return StreamingResponse(iter([bytes(pdf)]), media_type=ct)
-
-# @app.get("/mantras/{mantra_id}/audio")
-# def get_audio(mantra_id: str):
-#     oid = ensure_oid(mantra_id)
-#     doc = fetch_doc_or_404(oid)
-#     audio = doc.get("audio")
-#     if not audio:
-#         raise HTTPException(status_code=404, detail="Audio not found")
-#     ct = doc.get("audio_content_type") or "audio/mpeg"
-#     return StreamingResponse(iter([bytes(audio)]), media_type=ct)
-
-# # -------------------------------------------------
-# # Contact Profile: single-document CRUD
-# # -------------------------------------------------
-# CONTACT_ID = "contact_profile"
-
-# def default_contact():
-#     return {
-#         "_id": CONTACT_ID,
-#         "phone": "",
-#         "email": "",
-#         "location": "",
-#         "map_embed": "",
-#         "hero_image_url": ""
-#     }
-
-# @app.get("/contact")
-# def get_contact():
-#     doc = contacts_collection.find_one({"_id": CONTACT_ID})
-#     return doc if doc else default_contact()
-
-# @app.post("/contact")
-# def upsert_contact(
-#     phone: str = Form(""),
-#     email: str = Form(""),
-#     location: str = Form(""),
-#     map_embed: str = Form(""),
-#     hero_image_url: str = Form("")
-# ):
-#     if email and "@" not in email:
-#         raise HTTPException(status_code=400, detail="Invalid email")
-#     payload = {
-#         "_id": CONTACT_ID,
-#         "phone": phone.strip(),
-#         "email": email.strip(),
-#         "location": location.strip(),
-#         "map_embed": map_embed.strip(),
-#         "hero_image_url": hero_image_url.strip(),
-#     }
-#     doc = contacts_collection.find_one_and_update(
-#         {"_id": CONTACT_ID},
-#         {"$set": payload},
-#         upsert=True,
-#         return_document=ReturnDocument.AFTER
-#     )
-#     return {"message": "Contact profile saved", "contact": doc or payload}
-
-# @app.delete("/contact")
-# def clear_contact():
-#     contacts_collection.delete_one({"_id": CONTACT_ID})
-#     return {"message": "Contact profile cleared"}
-
-#---------------------------------------------------------------------------------------------------------------
-
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -336,6 +24,7 @@ db = client["devi_mantras_db"]
 mantras_collection = db["mantras"]
 events_collection = db["events"]
 feedback_collection = db["feedback"]
+contact_collection = db["contact_info"]  # New collection for contact info
 
 # Ensure TTL index for feedback (auto-delete after 30 days)
 feedback_collection.create_index("created_at", expireAfterSeconds=30*24*60*60)
@@ -385,17 +74,18 @@ def ensure_oid(oid_str: str) -> ObjectId:
         raise HTTPException(status_code=400, detail="Invalid ID")
 
 def safe_pop_media(doc: Dict[str, Any]) -> Dict[str, Any]:
+    # Only remove the binary data, keep the metadata
     for k in ["image", "pdf", "audio"]:
         doc.pop(k, None)
     return doc
 
 def attach_file_urls(doc: Dict[str, Any]) -> Dict[str, Any]:
     doc["_id"] = str(doc["_id"])
-    if "image_filename" in doc:
+    if "image_filename" in doc and doc["image_filename"]:
         doc["image_url"] = f"/mantras/{doc['_id']}/image"
-    if "pdf_filename" in doc:
+    if "pdf_filename" in doc and doc["pdf_filename"]:
         doc["pdf_url"] = f"/mantras/{doc['_id']}/pdf"
-    if "audio_filename" in doc:
+    if "audio_filename" in doc and doc["audio_filename"]:
         doc["audio_url"] = f"/mantras/{doc['_id']}/audio"
     return doc
 
@@ -428,6 +118,69 @@ def login(username: str = Form(...), password: str = Form(...)):
     raise HTTPException(status_code=401, detail="Invalid username or password")
 
 # -------------------------------------------------
+# Contact Information CRUD
+# -------------------------------------------------
+@app.get("/contact")
+def get_contact():
+    """Get contact information"""
+    contact_doc = contact_collection.find_one({"type": "main_contact"})
+    
+    if not contact_doc:
+        # Return default contact information
+        return {
+            "phone": "+91-9876543210",
+            "email": "contact@maharajni.dev", 
+            "location": "Bengaluru, Karnataka, India",
+            "map_embed": "",
+            "hero_image_url": ""
+        }
+    
+    return {
+        "phone": contact_doc.get("phone", ""),
+        "email": contact_doc.get("email", ""),
+        "location": contact_doc.get("location", ""),
+        "map_embed": contact_doc.get("map_embed", ""),
+        "hero_image_url": contact_doc.get("hero_image_url", "")
+    }
+
+@app.post("/contact")
+async def update_contact(
+    username: str = Form(...),
+    password: str = Form(...),
+    phone: str = Form(""),
+    email: str = Form(""),
+    location: str = Form(""),
+    map_embed: str = Form(""),
+    hero_image_url: str = Form("")
+):
+    """Update contact information (Admin only)"""
+    # Verify admin credentials
+    if username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    contact_data = {
+        "type": "main_contact",
+        "phone": phone.strip(),
+        "email": email.strip(),
+        "location": location.strip(),
+        "map_embed": map_embed.strip(),
+        "hero_image_url": hero_image_url.strip(),
+        "updated_at": datetime.utcnow()
+    }
+    
+    # Remove empty fields
+    contact_data = {k: v for k, v in contact_data.items() if v}
+    
+    # Upsert contact information
+    result = contact_collection.update_one(
+        {"type": "main_contact"},
+        {"$set": contact_data},
+        upsert=True
+    )
+    
+    return {"message": "Contact information updated successfully"}
+
+# -------------------------------------------------
 # Mantras: CRUD + List
 # -------------------------------------------------
 @app.post("/mantras/upload")
@@ -443,7 +196,17 @@ async def upload_mantra(
     norm_cat = normalize_category(category)
     image_data = await image.read()
     pdf_data = await pdf.read()
-    audio_data = await audio.read() if audio else None
+    
+    # Handle audio file properly
+    audio_data = None
+    audio_filename = None
+    audio_content_type = None
+    
+    if audio and audio.filename:  # Check if audio file was provided and has a filename
+        audio_data = await audio.read()
+        audio_filename = audio.filename
+        audio_content_type = audio.content_type or guess_mime(audio.filename, "audio/mpeg")
+        print(f"Audio uploaded: {audio_filename}, type: {audio_content_type}, size: {len(audio_data)} bytes")
 
     mantra = {
         "name": mantra_name.strip(),
@@ -457,10 +220,15 @@ async def upload_mantra(
         "pdf_filename": pdf.filename,
         "pdf_content_type": pdf.content_type or "application/pdf",
         "audio": Binary(audio_data) if audio_data else None,
-        "audio_filename": audio.filename if audio else None,
-        "audio_content_type": audio.content_type if audio else None,
+        "audio_filename": audio_filename,
+        "audio_content_type": audio_content_type,
     }
     result = mantras_collection.insert_one(mantra)
+    
+    # Log the inserted document for debugging
+    inserted_doc = mantras_collection.find_one({"_id": result.inserted_id})
+    print(f"Mantra uploaded - ID: {result.inserted_id}, Has audio: {bool(inserted_doc.get('audio_filename'))}")
+    
     return {"message": "Mantra uploaded successfully", "id": str(result.inserted_id)}
 
 @app.get("/mantras")
@@ -475,6 +243,10 @@ def get_mantra(mantra_id: str):
     doc = mantras_collection.find_one({"_id": oid})
     if not doc:
         raise HTTPException(status_code=404, detail="Mantra not found")
+    
+    # Debug log
+    print(f"Retrieving mantra {mantra_id}: audio_filename={doc.get('audio_filename')}, audio_url={doc.get('audio_filename') and f'/mantras/{mantra_id}/audio'}")
+    
     return attach_file_urls(safe_pop_media(doc))
 
 @app.get("/mantras/{mantra_id}/image")
@@ -498,8 +270,15 @@ def get_mantra_audio(mantra_id: str):
     oid = ensure_oid(mantra_id)
     doc = mantras_collection.find_one({"_id": oid})
     if not doc or not doc.get("audio"):
+        print(f"Audio not found for mantra {mantra_id}. Has audio field: {doc.get('audio') is not None}, audio_filename: {doc.get('audio_filename')}")
         raise HTTPException(status_code=404, detail="Audio not found")
-    return StreamingResponse(BytesIO(doc["audio"]), media_type=doc.get("audio_content_type", "audio/mpeg"))
+    
+    print(f"Serving audio for mantra {mantra_id}, content type: {doc.get('audio_content_type', 'audio/mpeg')}")
+    return StreamingResponse(
+        BytesIO(doc["audio"]), 
+        media_type=doc.get("audio_content_type", "audio/mpeg"),
+        headers={"Content-Disposition": f"inline; filename={doc.get('audio_filename', 'audio.mp3')}"}
+    )
 
 @app.put("/mantras/{mantra_id}")
 async def edit_mantra(
@@ -534,7 +313,7 @@ async def edit_mantra(
             "pdf_filename": pdf.filename,
             "pdf_content_type": pdf.content_type or "application/pdf",
         })
-    if audio:
+    if audio and audio.filename:
         audio_data = await audio.read()
         update_fields.update({
             "audio": Binary(audio_data),
@@ -556,7 +335,6 @@ def delete_mantra(mantra_id: str):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Mantra not found")
     return {"message": "Mantra deleted successfully"}
-
 
 # -------------------------------------------------
 # Events: CRUD
