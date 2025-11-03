@@ -471,3 +471,143 @@ def view_feedback(username: str, password: str):
         raise HTTPException(status_code=401, detail="Unauthorized")
     feedbacks = list(feedback_collection.find({}, {"_id": 0}))
     return feedbacks
+
+# -------------------------------------------------
+# Papers API
+# -------------------------------------------------
+
+# New collection for papers
+papers_collection = db["papers"]
+
+@app.post("/papers/upload")
+async def upload_paper(
+    username: str = Form(...),
+    password: str = Form(...),
+    title: str = Form(...),
+    description: str = Form(""),
+    paper_file: UploadFile = File(...)
+):
+    """Upload a paper (Admin only)"""
+    # Verify admin credentials
+    if username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    if not title.strip():
+        raise HTTPException(status_code=400, detail="Paper title is required")
+    
+    # Read file data
+    file_data = await paper_file.read()
+    
+    paper = {
+        "title": title.strip(),
+        "description": description.strip(),
+        "file": Binary(file_data),
+        "filename": paper_file.filename,
+        "content_type": paper_file.content_type or guess_mime(paper_file.filename, "application/pdf"),
+        "uploaded_at": datetime.utcnow(),
+        "file_size": len(file_data)
+    }
+    
+    result = papers_collection.insert_one(paper)
+    return {"message": "Paper uploaded successfully", "id": str(result.inserted_id)}
+
+@app.get("/papers")
+def list_papers():
+    """Get all papers (without file data)"""
+    projection = {"file": 0}  # Exclude the binary file data
+    papers = list(papers_collection.find({}, projection).sort([("uploaded_at", -1)]))
+    
+    for paper in papers:
+        paper["_id"] = str(paper["_id"])
+        paper["file_url"] = f"/papers/{paper['_id']}/file"
+        paper["uploaded_at"] = paper["uploaded_at"].isoformat() if paper.get("uploaded_at") else None
+    
+    return papers
+
+@app.get("/papers/{paper_id}/file")
+def get_paper_file(paper_id: str):
+    """Download paper file"""
+    oid = ensure_oid(paper_id)
+    paper = papers_collection.find_one({"_id": oid})
+    
+    if not paper or not paper.get("file"):
+        raise HTTPException(status_code=404, detail="Paper file not found")
+    
+    return StreamingResponse(
+        BytesIO(paper["file"]),
+        media_type=paper.get("content_type", "application/pdf"),
+        headers={
+            "Content-Disposition": f"inline; filename={paper.get('filename', 'paper.pdf')}",
+            "Content-Length": str(paper.get("file_size", 0))
+        }
+    )
+
+@app.put("/papers/{paper_id}")
+async def update_paper(
+    paper_id: str,
+    username: str = Form(...),
+    password: str = Form(...),
+    title: str = Form(None),
+    description: str = Form(None),
+    paper_file: UploadFile = File(None)
+):
+    """Update paper (Admin only)"""
+    # Verify admin credentials
+    if username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    oid = ensure_oid(paper_id)
+    paper = papers_collection.find_one({"_id": oid})
+    
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    
+    update_data = {}
+    
+    if title and title.strip():
+        update_data["title"] = title.strip()
+    
+    if description is not None:
+        update_data["description"] = description.strip()
+    
+    if paper_file:
+        file_data = await paper_file.read()
+        update_data.update({
+            "file": Binary(file_data),
+            "filename": paper_file.filename,
+            "content_type": paper_file.content_type or guess_mime(paper_file.filename, "application/pdf"),
+            "file_size": len(file_data),
+            "updated_at": datetime.utcnow()
+        })
+    
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No update data provided")
+    
+    result = papers_collection.update_one(
+        {"_id": oid},
+        {"$set": update_data}
+    )
+    
+    if result.modified_count == 0:
+        raise HTTPException(status_code=400, detail="Failed to update paper")
+    
+    return {"message": "Paper updated successfully"}
+
+@app.delete("/papers/{paper_id}")
+def delete_paper(
+    paper_id: str,
+    username: str = Form(...),
+    password: str = Form(...)
+):
+    """Delete paper (Admin only)"""
+    # Verify admin credentials
+    if username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    oid = ensure_oid(paper_id)
+    result = papers_collection.delete_one({"_id": oid})
+    
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    
+    return {"message": "Paper deleted successfully"}
